@@ -10,10 +10,50 @@ const STATUS_OPTIONS = [
   { value: 'maintenance', label: 'Maintenance' },
 ];
 
+function buildVehicleIcon(gpsActive, dotColor, surfaceColor) {
+  if (gpsActive) {
+    return L.divIcon({
+      className: '',
+      html: `<div style="width:16px;height:16px;border-radius:50%;background:${dotColor};border:2px solid ${surfaceColor};box-shadow:0 1px 4px rgba(20,30,40,0.4)"></div>`,
+      iconSize: [16, 16],
+      iconAnchor: [8, 8],
+    });
+  }
+  return L.divIcon({
+    className: '',
+    html:
+      '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">' +
+      `<div style="width:14px;height:14px;border-radius:50%;background:#d9534f;border:2px solid ${surfaceColor};box-shadow:0 0 0 3px rgba(217,83,79,0.35)"></div>` +
+      '<div style="background:#d9534f;color:#fff;font-family:Manrope,sans-serif;font-weight:700;font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap">Not transmitting</div></div>',
+    iconSize: [110, 40],
+    iconAnchor: [55, 8],
+  });
+}
+
+function buildPopupHtml(v, sc, dotColor, theme, gpsActive, notified) {
+  const gpsHtml = gpsActive
+    ? ''
+    : `<div style="margin-top:8px;padding-top:8px;border-top:1px solid ${theme.dangerBorder}">` +
+      `<div style="color:${theme.danger};font-weight:700;font-size:12px;margin-bottom:4px">GPS not transmitting</div>` +
+      `<div style="color:${theme.muted};font-size:11.5px">${notified ? 'Driver notified automatically.' : 'Driver will be notified on the next simulation cycle.'}</div></div>`;
+
+  return (
+    `<div style="font-family:Manrope,sans-serif;min-width:190px;color:${theme.text}">` +
+    `<div style="font-weight:800;font-size:14px;margin-bottom:2px">${v.plate}</div>` +
+    `<div style="font-size:12px;color:${theme.muted};margin-bottom:8px">${v.model}</div>` +
+    `<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>Status</span><strong style="color:${dotColor}">${sc.label}</strong></div>` +
+    `<div style="display:flex;justify-content:space-between;font-size:12px"><span>Energy</span><strong>${v.current.fuel_battery_level.toFixed(0)}%</strong></div>` +
+    gpsHtml +
+    `<button class="detail-btn" data-vid="${v.id}" style="width:100%;margin-top:8px;background:${theme.fill};color:${theme.text};border:none;border-radius:6px;padding:7px;font-family:Manrope,sans-serif;font-weight:700;font-size:12px;cursor:pointer">View detail</button>` +
+    '</div>'
+  );
+}
+
 export default function MapView({ fleet, theme, themeMode, notifications, onViewDetail, isMobile }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersLayerRef = useRef(null);
+  const markersByVehicleRef = useRef(new Map()); // vehicleId -> L.Marker, reused across redraws so open popups survive data refreshes
   const tileLayerRef = useRef(null);
   const chileBoundsRef = useRef(null);
   const themeMounted = useRef(false);
@@ -63,59 +103,64 @@ export default function MapView({ fleet, theme, themeMode, notifications, onView
     });
   }
 
+  function wireDetailButton(node) {
+    if (!node) return;
+    const detailBtn = node.querySelector('.detail-btn');
+    if (detailBtn) {
+      const vid = Number(detailBtn.getAttribute('data-vid'));
+      detailBtn.onclick = () => latest.current.onViewDetail(vid);
+    }
+  }
+
+  // Updates markers in place (setLatLng/setIcon/setPopupContent) instead of
+  // clearing and rebuilding the layer on every data refresh — clearLayers()
+  // destroys the DOM node for any currently-open popup, so a background
+  // simulate/poll tick would silently close whatever the user had open.
   function updateMarkers() {
     const markersLayer = markersLayerRef.current;
     if (!markersLayer) return;
-    markersLayer.clearLayers();
+    const registry = markersByVehicleRef.current;
     const { fleet, theme, themeMode, mapStatusFilter, expandedCity, notifications } = latest.current;
-    if (!expandedCity) return; // collapsed cluster view is a CSS overlay (clusterPins), not Leaflet markers
-    const matches = v => mapStatusFilter === 'all' || v.status === mapStatusFilter;
-    const vehicles = fleet.filter(v => v.base_city === expandedCity && matches(v) && v.current);
 
-    vehicles.forEach(v => {
+    if (!expandedCity) {
+      // collapsed cluster view is a CSS overlay (clusterPins), not Leaflet markers
+      registry.forEach(marker => markersLayer.removeLayer(marker));
+      registry.clear();
+      return;
+    }
+
+    const matches = v => mapStatusFilter === 'all' || v.status === mapStatusFilter;
+    const visible = fleet.filter(v => v.base_city === expandedCity && matches(v) && v.current);
+    const visibleIds = new Set(visible.map(v => v.id));
+
+    for (const [id, marker] of registry) {
+      if (!visibleIds.has(id)) {
+        markersLayer.removeLayer(marker);
+        registry.delete(id);
+      }
+    }
+
+    visible.forEach(v => {
       const sc = STATUS_COLORS[v.status];
       const dotColor = themeMode === 'dark' ? sc.darkColor : sc.color;
       const gpsActive = v.current.gps_active;
-
-      let marker;
-      if (gpsActive) {
-        const icon = L.divIcon({
-          className: '',
-          html: `<div style="width:16px;height:16px;border-radius:50%;background:${dotColor};border:2px solid ${theme.surface};box-shadow:0 1px 4px rgba(20,30,40,0.4)"></div>`,
-          iconSize: [16, 16],
-          iconAnchor: [8, 8],
-        });
-        marker = L.marker([v.current.lat, v.current.lng], { icon }).addTo(markersLayer);
-      } else {
-        const icon = L.divIcon({
-          className: '',
-          html:
-            '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">' +
-            `<div style="width:14px;height:14px;border-radius:50%;background:#d9534f;border:2px solid ${theme.surface};box-shadow:0 0 0 3px rgba(217,83,79,0.35)"></div>` +
-            '<div style="background:#d9534f;color:#fff;font-family:Manrope,sans-serif;font-weight:700;font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap">Not transmitting</div></div>',
-          iconSize: [110, 40],
-          iconAnchor: [55, 8],
-        });
-        marker = L.marker([v.current.lat, v.current.lng], { icon }).addTo(markersLayer);
-      }
-
+      const icon = buildVehicleIcon(gpsActive, dotColor, theme.surface);
       const notified = notifications.some(n => n.vehicle_id === v.id && n.type === 'gps_offline');
-      const gpsHtml = gpsActive
-        ? ''
-        : `<div style="margin-top:8px;padding-top:8px;border-top:1px solid ${theme.dangerBorder}">` +
-          `<div style="color:${theme.danger};font-weight:700;font-size:12px;margin-bottom:4px">GPS not transmitting</div>` +
-          `<div style="color:${theme.muted};font-size:11.5px">${notified ? 'Driver notified automatically.' : 'Driver will be notified on the next simulation cycle.'}</div></div>`;
+      const popupHtml = buildPopupHtml(v, sc, dotColor, theme, gpsActive, notified);
 
-      marker.bindPopup(
-        `<div style="font-family:Manrope,sans-serif;min-width:190px;color:${theme.text}">` +
-          `<div style="font-weight:800;font-size:14px;margin-bottom:2px">${v.plate}</div>` +
-          `<div style="font-size:12px;color:${theme.muted};margin-bottom:8px">${v.model}</div>` +
-          `<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>Status</span><strong style="color:${dotColor}">${sc.label}</strong></div>` +
-          `<div style="display:flex;justify-content:space-between;font-size:12px"><span>Energy</span><strong>${v.current.fuel_battery_level.toFixed(0)}%</strong></div>` +
-          gpsHtml +
-          `<button class="detail-btn" data-vid="${v.id}" style="width:100%;margin-top:8px;background:${theme.fill};color:${theme.text};border:none;border-radius:6px;padding:7px;font-family:Manrope,sans-serif;font-weight:700;font-size:12px;cursor:pointer">View detail</button>` +
-          '</div>'
-      );
+      const existing = registry.get(v.id);
+      if (existing) {
+        existing.setLatLng([v.current.lat, v.current.lng]);
+        existing.setIcon(icon);
+        existing.setPopupContent(popupHtml);
+        // setPopupContent() doesn't re-fire 'popupopen', so an already-open
+        // popup needs its button re-wired against the fresh DOM it just got.
+        if (existing.isPopupOpen()) wireDetailButton(existing.getPopup()._contentNode);
+      } else {
+        const marker = L.marker([v.current.lat, v.current.lng], { icon }).addTo(markersLayer);
+        marker.bindPopup(popupHtml);
+        registry.set(v.id, marker);
+      }
     });
   }
 
@@ -133,15 +178,7 @@ export default function MapView({ fleet, theme, themeMode, notifications, onView
     chileBoundsRef.current = L.latLngBounds(CITIES.map(c => [c.lat, c.lng]));
 
     map.on('moveend zoomend', recomputePins);
-    map.on('popupopen', e => {
-      const node = e.popup._contentNode;
-      if (!node) return;
-      const detailBtn = node.querySelector('.detail-btn');
-      if (detailBtn) {
-        const vid = Number(detailBtn.getAttribute('data-vid'));
-        detailBtn.onclick = () => latest.current.onViewDetail(vid);
-      }
-    });
+    map.on('popupopen', e => wireDetailButton(e.popup._contentNode));
 
     const rafId = requestAnimationFrame(() => {
       map.invalidateSize();
@@ -158,6 +195,7 @@ export default function MapView({ fleet, theme, themeMode, notifications, onView
       map.remove();
       mapRef.current = null;
       markersLayerRef.current = null;
+      markersByVehicleRef.current.clear();
       tileLayerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
