@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { buildAssistantReply } from '../assistant.js';
+import { api } from '../api.js';
 
 const SUGGESTIONS = [
   'Which vehicles need maintenance this week?',
@@ -8,7 +8,7 @@ const SUGGESTIONS = [
   'General fleet summary',
 ];
 
-export default function Assistant({ fleet, theme, isMobile, showSuggestions }) {
+export default function Assistant({ theme, isMobile, showSuggestions }) {
   const [messages, setMessages] = useState([
     { role: 'assistant', text: "Hi, I'm the fleet assistant. Ask me about maintenance, fuel, alerts, or status by city." },
   ]);
@@ -20,17 +20,20 @@ export default function Assistant({ fleet, theme, isMobile, showSuggestions }) {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages, isTyping]);
 
-  function sendMessage(overrideText) {
+  async function sendMessage(overrideText) {
     const text = (overrideText ?? input).trim();
-    if (!text) return;
+    if (!text || isTyping) return;
     setMessages(prev => [...prev, { role: 'user', text }]);
     setInput('');
     setIsTyping(true);
-    setTimeout(() => {
-      const reply = buildAssistantReply(fleet, text);
-      setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
+    try {
+      const { answer } = await api.askAssistant(text);
+      setMessages(prev => [...prev, { role: 'assistant', text: answer }]);
+    } catch (e) {
+      setMessages(prev => [...prev, { role: 'assistant', text: `Sorry, I couldn't reach the fleet backend (${e.message}).` }]);
+    } finally {
       setIsTyping(false);
-    }, 700);
+    }
   }
 
   return (
@@ -85,9 +88,11 @@ export default function Assistant({ fleet, theme, isMobile, showSuggestions }) {
             <button
               key={label}
               onClick={() => sendMessage(label)}
+              disabled={isTyping}
               style={{
                 background: 'var(--fill)', border: 'none', borderRadius: '16px', padding: '7px 13px',
-                fontFamily: 'Manrope,sans-serif', fontSize: '12.5px', color: 'var(--text)', cursor: 'pointer',
+                fontFamily: 'Manrope,sans-serif', fontSize: '12.5px', color: 'var(--text)', cursor: isTyping ? 'default' : 'pointer',
+                opacity: isTyping ? 0.6 : 1,
               }}
             >
               {label}
@@ -112,9 +117,11 @@ export default function Assistant({ fleet, theme, isMobile, showSuggestions }) {
         />
         <button
           onClick={() => sendMessage()}
+          disabled={isTyping}
           style={{
             background: 'var(--accent)', border: 'none', color: '#fff', fontWeight: 700, fontSize: '13.5px',
-            padding: '10px 20px', borderRadius: '9px', cursor: 'pointer', fontFamily: 'Manrope,sans-serif',
+            padding: '10px 20px', borderRadius: '9px', cursor: isTyping ? 'default' : 'pointer', fontFamily: 'Manrope,sans-serif',
+            opacity: isTyping ? 0.6 : 1,
           }}
         >
           Send

@@ -1,3 +1,23 @@
-node_modules
-dist
+# --- Frontend (Node/Vite) ---
+node_modules/
+dist/
 *.local
+
+# --- Backend (Python) ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+*.db
+*.sqlite3
+
+# --- Secrets (never commit) ---
+.env
+.env.*
+!.env.example
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db

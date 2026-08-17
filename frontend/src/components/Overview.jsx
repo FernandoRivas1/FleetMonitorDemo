@@ -9,27 +9,38 @@ const STATUS_OPTIONS = [
 ];
 const CITY_OPTIONS = ['All', ...CITIES.map(c => c.name)];
 
-export default function Overview({
-  fleet, theme, notifiedVehicles, onNotify, onSelectVehicle, onExport, isMobile, highlightAlertsOnly, cardDensity,
-}) {
+export default function Overview({ fleet, theme, alerts, notifications, onSelectVehicle, onExport, isMobile, cardDensity }) {
   const [searchPlate, setSearchPlate] = useState('');
   const [filterCity, setFilterCity] = useState('All');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterNoGpsOnly, setFilterNoGpsOnly] = useState(false);
 
-  const noGpsFleet = useMemo(() => fleet.filter(v => !v.gpsActive), [fleet]);
+  const alertCountByVehicle = useMemo(() => {
+    const counts = new Map();
+    for (const a of alerts) {
+      if (a.resolved) continue;
+      counts.set(a.vehicle_id, (counts.get(a.vehicle_id) || 0) + 1);
+    }
+    return counts;
+  }, [alerts]);
+
+  const gpsNotifiedVehicles = useMemo(
+    () => new Set(notifications.filter(n => n.type === 'gps_offline').map(n => n.vehicle_id)),
+    [notifications]
+  );
+
+  const noGpsFleet = useMemo(() => fleet.filter(v => v.current && !v.current.gps_active), [fleet]);
 
   const filteredVehicles = useMemo(() => {
     let filtered = fleet.filter(
       v =>
-        (filterCity === 'All' || v.city === filterCity) &&
+        (filterCity === 'All' || v.base_city === filterCity) &&
         (filterStatus === 'all' || v.status === filterStatus) &&
         (searchPlate === '' || v.plate.toLowerCase().includes(searchPlate.toLowerCase()))
     );
-    if (highlightAlertsOnly) filtered = filtered.filter(v => v.alerts.length > 0);
-    if (filterNoGpsOnly) filtered = filtered.filter(v => !v.gpsActive);
+    if (filterNoGpsOnly) filtered = filtered.filter(v => v.current && !v.current.gps_active);
     return filtered;
-  }, [fleet, filterCity, filterStatus, searchPlate, highlightAlertsOnly, filterNoGpsOnly]);
+  }, [fleet, filterCity, filterStatus, searchPlate, filterNoGpsOnly]);
 
   const cardGridColumns = isMobile
     ? '1fr'
@@ -129,8 +140,8 @@ export default function Overview({
               key={v.id}
               vehicle={v}
               theme={theme}
-              notified={!!notifiedVehicles[v.id]}
-              onNotify={onNotify}
+              alertCount={alertCountByVehicle.get(v.id) || 0}
+              gpsNotified={gpsNotifiedVehicles.has(v.id)}
               onSelect={onSelectVehicle}
             />
           ))}
@@ -145,13 +156,15 @@ export default function Overview({
   );
 }
 
-function VehicleCard({ vehicle: v, theme, notified, onNotify, onSelect }) {
+function VehicleCard({ vehicle: v, theme, alertCount, gpsNotified, onSelect }) {
   const statusColors = {
     available: { color: theme.success, bg: theme.successSoft, label: 'Available' },
     rented: { color: theme.accentStrong, bg: theme.accentSoft, label: 'Rented' },
     maintenance: { color: theme.danger, bg: theme.dangerSoft, label: 'Maintenance' },
   }[v.status];
-  const fuelBarColor = v.fuelPct < 20 ? theme.dangerStrong : theme.accent;
+  const fuelPct = v.current ? v.current.fuel_battery_level : null;
+  const fuelBarColor = fuelPct != null && fuelPct < 20 ? theme.dangerStrong : theme.accent;
+  const hasNoGps = v.current ? !v.current.gps_active : false;
 
   return (
     <div
@@ -168,17 +181,19 @@ function VehicleCard({ vehicle: v, theme, notified, onNotify, onSelect }) {
           {statusColors.label}
         </div>
       </div>
-      <div style={{ fontSize: '12.5px', color: 'var(--muted)', marginBottom: '10px' }}>{v.city} · {v.type}</div>
-      <div style={{ marginBottom: '10px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: 'var(--muted)', marginBottom: '4px' }}>
-          <span>{v.energyLabel}</span>
-          <span>{v.fuelPct}%</span>
+      <div style={{ fontSize: '12.5px', color: 'var(--muted)', marginBottom: '10px' }}>{v.base_city}</div>
+      {fuelPct != null && (
+        <div style={{ marginBottom: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: 'var(--muted)', marginBottom: '4px' }}>
+            <span>Energy</span>
+            <span>{fuelPct.toFixed(0)}%</span>
+          </div>
+          <div style={{ height: '6px', borderRadius: '3px', background: 'var(--fill-soft)', overflow: 'hidden' }}>
+            <div style={{ height: '100%', borderRadius: '3px', background: fuelBarColor, width: `${fuelPct}%` }} />
+          </div>
         </div>
-        <div style={{ height: '6px', borderRadius: '3px', background: 'var(--fill-soft)', overflow: 'hidden' }}>
-          <div style={{ height: '100%', borderRadius: '3px', background: fuelBarColor, width: `${v.fuelPct}%` }} />
-        </div>
-      </div>
-      {v.alerts.length > 0 && (
+      )}
+      {alertCount > 0 && (
         <div
           style={{
             background: 'var(--danger-soft)', color: 'var(--danger)', fontSize: '11.5px', fontWeight: 700,
@@ -186,28 +201,18 @@ function VehicleCard({ vehicle: v, theme, notified, onNotify, onSelect }) {
           }}
         >
           <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--danger)', flexShrink: 0 }} />
-          {v.alerts.length} {v.alerts.length === 1 ? 'active alert' : 'active alerts'}
+          {alertCount} {alertCount === 1 ? 'active alert' : 'active alerts'}
         </div>
       )}
-      {!v.gpsActive && (
+      {hasNoGps && (
         <div style={{ background: 'var(--danger-soft)', border: '1px solid var(--danger-border)', borderRadius: '7px', padding: '8px 9px' }}>
-          <div style={{ color: 'var(--danger)', fontSize: '11.5px', fontWeight: 700, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ color: 'var(--danger)', fontSize: '11.5px', fontWeight: 700, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--danger)', flexShrink: 0 }} />
             GPS not transmitting
           </div>
-          <button
-            onClick={e => {
-              e.stopPropagation();
-              if (!notified) onNotify(v);
-            }}
-            style={{
-              width: '100%', background: notified ? 'var(--disabled-bg)' : 'var(--accent)', border: 'none',
-              color: notified ? 'var(--muted)' : '#fff', fontFamily: 'Manrope,sans-serif', fontWeight: 700,
-              fontSize: '11.5px', padding: '6px', borderRadius: '6px', cursor: notified ? 'default' : 'pointer',
-            }}
-          >
-            {notified ? 'Notification sent' : 'Notify client'}
-          </button>
+          <div style={{ fontSize: '11px', color: 'var(--danger-muted)' }}>
+            {gpsNotified ? 'Driver notified automatically.' : 'Driver will be notified on the next simulation cycle.'}
+          </div>
         </div>
       )}
     </div>

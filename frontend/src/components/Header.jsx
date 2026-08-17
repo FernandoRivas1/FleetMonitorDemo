@@ -5,7 +5,7 @@ const TAB_DEFS = [
   { key: 'asistente', label: 'Chat', desktopLabel: 'Assistant' },
 ];
 
-export default function Header({ theme, isMobile, activeTab, onTabChange, fleetCount, themeMode, onToggleTheme }) {
+export default function Header({ theme, isMobile, activeTab, onTabChange, fleetCount, themeMode, onToggleTheme, onSimulate, simulating }) {
   return (
     <div
       style={{
@@ -56,6 +56,20 @@ export default function Header({ theme, isMobile, activeTab, onTabChange, fleetC
       )}
 
       <button
+        onClick={onSimulate}
+        disabled={simulating}
+        title="Advance the simulated fleet by one day"
+        style={{
+          background: 'var(--accent)', border: 'none', color: '#fff',
+          fontFamily: 'Manrope,sans-serif', fontWeight: 700, fontSize: '12.5px', padding: '8px 14px',
+          borderRadius: '8px', cursor: simulating ? 'default' : 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+          opacity: simulating ? 0.6 : 1,
+        }}
+      >
+        {simulating ? 'Simulating…' : 'Simulate'}
+      </button>
+
+      <button
         onClick={onToggleTheme}
         style={{
           background: 'var(--fill)', border: '1px solid var(--border)', color: 'var(--text)',
@@ -63,7 +77,7 @@ export default function Header({ theme, isMobile, activeTab, onTabChange, fleetC
           borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
         }}
       >
-        {themeMode === 'dark' ? 'Light mode' : 'Dark mode'}
+        {isMobile ? (themeMode === 'dark' ? '☀️' : '🌙') : themeMode === 'dark' ? 'Light mode' : 'Dark mode'}
       </button>
     </div>
   );

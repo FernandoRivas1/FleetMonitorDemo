@@ -10,7 +10,7 @@ const STATUS_OPTIONS = [
   { value: 'maintenance', label: 'Maintenance' },
 ];
 
-export default function MapView({ fleet, theme, themeMode, notifiedVehicles, onNotify, onViewDetail, isMobile }) {
+export default function MapView({ fleet, theme, themeMode, notifications, onViewDetail, isMobile }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersLayerRef = useRef(null);
@@ -25,7 +25,7 @@ export default function MapView({ fleet, theme, themeMode, notifiedVehicles, onN
   // Popup buttons are wired once via Leaflet's `popupopen` event, so they read
   // through this ref to always see the latest props/state instead of a stale closure.
   const latest = useRef({});
-  latest.current = { fleet, theme, themeMode, notifiedVehicles, onNotify, onViewDetail, mapStatusFilter, expandedCity };
+  latest.current = { fleet, theme, themeMode, notifications, onViewDetail, mapStatusFilter, expandedCity };
 
   function recomputePins() {
     const map = mapRef.current;
@@ -67,30 +67,25 @@ export default function MapView({ fleet, theme, themeMode, notifiedVehicles, onN
     const markersLayer = markersLayerRef.current;
     if (!markersLayer) return;
     markersLayer.clearLayers();
-    const { fleet, theme, themeMode, mapStatusFilter, expandedCity, notifiedVehicles } = latest.current;
+    const { fleet, theme, themeMode, mapStatusFilter, expandedCity, notifications } = latest.current;
     if (!expandedCity) return; // collapsed cluster view is a CSS overlay (clusterPins), not Leaflet markers
-    const city = CITIES.find(c => c.name === expandedCity);
-    if (!city) return;
     const matches = v => mapStatusFilter === 'all' || v.status === mapStatusFilter;
-    const vehicles = fleet.filter(v => v.city === city.name && matches(v));
+    const vehicles = fleet.filter(v => v.base_city === expandedCity && matches(v) && v.current);
 
-    vehicles.forEach((v, i) => {
-      const angle = (i / vehicles.length) * Math.PI * 2;
-      const radius = 0.02 + (i % 3) * 0.015;
-      const lat = city.lat + Math.sin(angle) * radius;
-      const lng = city.lng + Math.cos(angle) * radius;
+    vehicles.forEach(v => {
       const sc = STATUS_COLORS[v.status];
       const dotColor = themeMode === 'dark' ? sc.darkColor : sc.color;
+      const gpsActive = v.current.gps_active;
 
       let marker;
-      if (v.gpsActive) {
+      if (gpsActive) {
         const icon = L.divIcon({
           className: '',
           html: `<div style="width:16px;height:16px;border-radius:50%;background:${dotColor};border:2px solid ${theme.surface};box-shadow:0 1px 4px rgba(20,30,40,0.4)"></div>`,
           iconSize: [16, 16],
           iconAnchor: [8, 8],
         });
-        marker = L.marker([lat, lng], { icon }).addTo(markersLayer);
+        marker = L.marker([v.current.lat, v.current.lng], { icon }).addTo(markersLayer);
       } else {
         const icon = L.divIcon({
           className: '',
@@ -101,26 +96,22 @@ export default function MapView({ fleet, theme, themeMode, notifiedVehicles, onN
           iconSize: [110, 40],
           iconAnchor: [55, 8],
         });
-        marker = L.marker([lat, lng], { icon }).addTo(markersLayer);
+        marker = L.marker([v.current.lat, v.current.lng], { icon }).addTo(markersLayer);
       }
 
-      const alertsHtml = v.alerts.length
-        ? `<div style="margin-top:6px;background:${theme.dangerSoft};color:${theme.danger};font-size:11.5px;font-weight:700;padding:5px 8px;border-radius:6px">${v.alerts.length} active alert(s)</div>`
-        : '';
-      const notified = !!notifiedVehicles[v.id];
-      const gpsHtml = v.gpsActive
+      const notified = notifications.some(n => n.vehicle_id === v.id && n.type === 'gps_offline');
+      const gpsHtml = gpsActive
         ? ''
         : `<div style="margin-top:8px;padding-top:8px;border-top:1px solid ${theme.dangerBorder}">` +
-          `<div style="color:${theme.danger};font-weight:700;font-size:12px;margin-bottom:6px">GPS not transmitting</div>` +
-          `<button class="notify-btn" data-vid="${v.id}" style="width:100%;background:${notified ? theme.disabledBg : theme.accent};color:${notified ? theme.muted : '#fff'};border:none;border-radius:6px;padding:7px;font-family:Manrope,sans-serif;font-weight:700;font-size:12px;cursor:${notified ? 'default' : 'pointer'}"${notified ? ' disabled' : ''}>${notified ? 'Notification sent' : 'Notify client'}</button></div>`;
+          `<div style="color:${theme.danger};font-weight:700;font-size:12px;margin-bottom:4px">GPS not transmitting</div>` +
+          `<div style="color:${theme.muted};font-size:11.5px">${notified ? 'Driver notified automatically.' : 'Driver will be notified on the next simulation cycle.'}</div></div>`;
 
       marker.bindPopup(
         `<div style="font-family:Manrope,sans-serif;min-width:190px;color:${theme.text}">` +
           `<div style="font-weight:800;font-size:14px;margin-bottom:2px">${v.plate}</div>` +
           `<div style="font-size:12px;color:${theme.muted};margin-bottom:8px">${v.model}</div>` +
           `<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>Status</span><strong style="color:${dotColor}">${sc.label}</strong></div>` +
-          `<div style="display:flex;justify-content:space-between;font-size:12px"><span>${v.energyLabel}</span><strong>${v.fuelPct}%</strong></div>` +
-          alertsHtml +
+          `<div style="display:flex;justify-content:space-between;font-size:12px"><span>Energy</span><strong>${v.current.fuel_battery_level.toFixed(0)}%</strong></div>` +
           gpsHtml +
           `<button class="detail-btn" data-vid="${v.id}" style="width:100%;margin-top:8px;background:${theme.fill};color:${theme.text};border:none;border-radius:6px;padding:7px;font-family:Manrope,sans-serif;font-weight:700;font-size:12px;cursor:pointer">View detail</button>` +
           '</div>'
@@ -145,18 +136,6 @@ export default function MapView({ fleet, theme, themeMode, notifiedVehicles, onN
     map.on('popupopen', e => {
       const node = e.popup._contentNode;
       if (!node) return;
-      const notifyBtn = node.querySelector('.notify-btn');
-      if (notifyBtn) {
-        const vid = Number(notifyBtn.getAttribute('data-vid'));
-        const v = latest.current.fleet.find(x => x.id === vid);
-        notifyBtn.onclick = () => {
-          latest.current.onNotify(v);
-          notifyBtn.textContent = 'Notification sent';
-          notifyBtn.disabled = true;
-          notifyBtn.style.opacity = '0.6';
-          notifyBtn.style.cursor = 'default';
-        };
-      }
       const detailBtn = node.querySelector('.detail-btn');
       if (detailBtn) {
         const vid = Number(detailBtn.getAttribute('data-vid'));
@@ -215,13 +194,11 @@ export default function MapView({ fleet, theme, themeMode, notifiedVehicles, onN
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeMode]);
 
-  // Redraw markers when the status filter or expanded city changes. Notifying a
-  // client deliberately does NOT trigger this — the popup updates its own button
-  // in place (above) so it doesn't get yanked shut mid-interaction.
+  // Redraw markers when the status filter, expanded city, or fleet/notifications data changes.
   useEffect(() => {
     updateMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapStatusFilter, expandedCity]);
+  }, [mapStatusFilter, expandedCity, fleet, notifications]);
 
   function expandCity(city) {
     setExpandedCity(city.name);
@@ -246,14 +223,14 @@ export default function MapView({ fleet, theme, themeMode, notifiedVehicles, onN
     if (expandedCity) return [];
     return CITIES.filter(city => pinPositions[city.name])
       .map(city => {
-        const vehicles = fleet.filter(v => v.city === city.name && (mapStatusFilter === 'all' || v.status === mapStatusFilter));
+        const vehicles = fleet.filter(v => v.base_city === city.name && (mapStatusFilter === 'all' || v.status === mapStatusFilter));
         const pos = pinPositions[city.name];
         return { city: city.name, count: vehicles.length, top: pos.topPct + '%', left: pos.leftPct + '%' };
       })
       .filter(p => p.count > 0);
   }, [fleet, mapStatusFilter, pinPositions, expandedCity]);
 
-  const totalFiltered = expandedCity ? fleet.filter(v => v.city === expandedCity).length : fleet.length;
+  const totalFiltered = expandedCity ? fleet.filter(v => v.base_city === expandedCity).length : fleet.length;
   const locationLabel = expandedCity ? `${expandedCity} · ${totalFiltered} vehicles` : `Chile · ${fleet.length} vehicles across 8 cities`;
 
   return (
