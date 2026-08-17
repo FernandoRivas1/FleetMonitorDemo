@@ -1,5 +1,5 @@
-"""SQLAlchemy engine/session setup. Works against SQLite (local dev) or
-Postgres/Neon (production) purely based on DATABASE_URL's scheme."""
+"""SQLAlchemy engine/session setup. Postgres (Neon) only — for both local
+dev and production, purely via DATABASE_URL."""
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
@@ -20,8 +20,9 @@ def _normalize_url(url: str) -> str:
 
 DATABASE_URL = _normalize_url(settings.DATABASE_URL)
 
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+# pool_pre_ping guards against Neon suspending its compute after idling and
+# the pool handing out a stale connection on the next request.
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

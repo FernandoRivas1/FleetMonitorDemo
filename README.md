@@ -43,7 +43,8 @@ that surfaces them on a map, in a searchable list, and in a chat interface.
 │   deployed on Vercel   │                              │   deployed on Render      │
 └──────────────────────┘                              └─────────────┬─────────────┘
                                                                      │
-                                                        SQLite (dev) │ Postgres/Neon (prod)
+                                                          Postgres (Neon) — same
+                                                          database for dev & prod
                                                                      ▼
                                                           vehicles, drivers,
                                                           telemetry, alerts,
@@ -70,7 +71,7 @@ that surfaces them on a map, in a searchable list, and in a chat interface.
 |---|---|
 | Frontend | React 18 + Vite, Leaflet (map) |
 | Backend | Python + FastAPI, SQLAlchemy 2.0 |
-| Database | SQLite locally, Postgres (Neon) in production |
+| Database | Postgres (Neon) — same database for local dev and production |
 | AI assistant | Claude API (`anthropic` SDK), with a free rule-based fallback |
 | Frontend hosting | Vercel |
 | Backend hosting | Render |
@@ -94,11 +95,18 @@ cd backend
 python -m venv .venv && .venv\Scripts\activate   # or: source .venv/bin/activate
 pip install -r requirements.txt
 copy .env.example .env                            # or: cp .env.example .env
+# edit .env and set DATABASE_URL to your Postgres/Neon connection string —
+# the app fails fast on startup if it's missing
 uvicorn app.main:app --reload --port 8000
 ```
 
-The database is created and auto-seeded with a synthetic fleet on first
-startup — nothing else to run. API docs at http://localhost:8000/docs.
+Tables are created and the database is auto-seeded with a synthetic fleet on
+first startup if it's empty — nothing else to run. API docs at
+http://localhost:8000/docs.
+
+There is no local SQLite fallback — local dev and production both point at
+Postgres (a free [Neon](https://neon.tech) project works well for local dev
+too; nothing here needs a heavyweight local Postgres install).
 
 **2. Frontend** (see [`frontend/README.md`](frontend/README.md) for detail):
 
@@ -122,7 +130,7 @@ this automatically every 20 seconds so the demo stays "alive" without input.
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `DATABASE_URL` | SQLite locally; a Postgres/Neon connection string in production | `sqlite:///./fleetmonitor.db` |
+| `DATABASE_URL` | Postgres/Neon connection string — required, same variable locally and in production | none (app fails fast if unset) |
 | `ALLOWED_ORIGINS` | Comma-separated list of origins allowed to call the API (CORS) | `http://localhost:5173,...` |
 | `ANTHROPIC_API_KEY` | Optional. Enables Claude-powered answers in `/assistant/ask` | unset (falls back to rule-based) |
 | `ANTHROPIC_MODEL` | Claude model used for the assistant | `claude-opus-5` |

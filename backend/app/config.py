@@ -11,9 +11,20 @@ def _split_csv(value: str) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
+def _require(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(
+            f"{name} is not set. Copy backend/.env.example to backend/.env and fill it in "
+            f"(a Postgres/Neon connection string for {name})."
+        )
+    return value
+
+
 class Settings:
-    # SQLite locally by default; set DATABASE_URL to a Postgres/Neon URL in production.
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./fleetmonitor.db")
+    # Postgres (Neon) for both local dev and production — no SQLite fallback.
+    # Set in backend/.env locally; set as a real env var on Render in production.
+    DATABASE_URL: str = _require("DATABASE_URL")
 
     # Comma-separated list of origins allowed to call this API (the frontend's URL(s)).
     ALLOWED_ORIGINS: list[str] = _split_csv(
