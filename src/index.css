@@ -1,0 +1,64 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  margin: 0;
+  font-family: 'Manrope', sans-serif;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ccd2d9;
+  border-radius: 4px;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+a {
+  color: #2f7ea8;
+}
+
+a:hover {
+  color: #1f5f80;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid #4c9dcf;
+  outline-offset: 2px;
+}
+
+.vehicle-card {
+  animation: fadeIn 0.25s ease;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.vehicle-card:hover {
+  box-shadow: 0 6px 18px var(--shadow);
+  border-color: var(--border-strong);
+}
