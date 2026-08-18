@@ -5,10 +5,17 @@ one day and generates one new TelemetryReading per vehicle, then evaluates
 the notification rules against the new reading and any open maintenance
 alerts. All "sending" is simulated — a DriverNotification row with
 sent=True is the entire side effect.
+
+Movement/speed/mileage/fuel are generated together from one daily "distance
+driven" figure per vehicle (status-dependent) instead of independently, so a
+vehicle's odometer, fuel level, and on-map position stay mutually
+consistent — a parked vehicle doesn't drift across town or burn fuel, and a
+vehicle that logged 120km doesn't show a flat battery from nowhere.
 """
 from __future__ import annotations
 
 import datetime as dt
+import math
 import random
 
 from sqlalchemy.orm import Session
@@ -22,16 +29,103 @@ GPS_OFFLINE_PROBABILITY = 0.07
 OVERSPEED_ROLL_PROBABILITY = 0.08
 MAINTENANCE_DUE_SOON_WINDOW_DAYS = 7
 
+KM_PER_DEG_LAT = 111.0
+# How far a vehicle's on-map position is allowed to drift from its base city
+# before movement starts biasing back toward the center — a generous multiple
+# of the city's own scatter radius, so it reads as "still near this city"
+# rather than "wandered across the country".
+MAX_DRIFT_MULTIPLIER = 1.4
 
-def _jitter(lat: float, lng: float) -> tuple[float, float]:
-    return (
-        lat + random.uniform(-CITY_RADIUS_DEGREES, CITY_RADIUS_DEGREES),
-        lng + random.uniform(-CITY_RADIUS_DEGREES, CITY_RADIUS_DEGREES),
-    )
+# Daily distance actually driven (km) — feeds the odometer and fuel use.
+# On-map position moves by a much smaller "local step" regardless of this,
+# since the dashboard shows an approximate last-known spot within the city,
+# not a breadcrumb trail of the whole trip.
+RENTED_DISTANCE_RANGE = (15.0, 160.0)
+AVAILABLE_TRIP_PROBABILITY = 0.3  # otherwise parked, distance 0
+AVAILABLE_DISTANCE_RANGE = (1.0, 15.0)
+MAINTENANCE_TRIP_PROBABILITY = 0.3  # a short test drive; otherwise sitting in the shop
+MAINTENANCE_DISTANCE_RANGE = (0.5, 3.0)
+MAINTENANCE_SPEED_RANGE = (10.0, 30.0)  # lot/service-bay speeds, not open road
+
+LOCAL_STEP_DRIVING_RANGE_KM = (0.3, 2.5)
+LOCAL_STEP_IDLE_RANGE_KM = (0.0, 0.3)  # GPS jitter while parked
+
+FUEL_CONSUMPTION_PER_KM_RANGE = (0.12, 0.22)  # % tank per km driven
+IDLE_DRAIN_RANGE = (0.0, 0.5)  # % while parked (self-discharge / measurement noise)
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+def _heading_from_points(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Bearing (radians) from point 1 to point 2, flat-earth approximation —
+    fine at the few-km scale these steps operate at."""
+    dlat = lat2 - lat1
+    dlng = (lng2 - lng1) * math.cos(math.radians((lat1 + lat2) / 2))
+    if dlat == 0 and dlng == 0:
+        return random.uniform(0, 2 * math.pi)
+    return math.atan2(dlng, dlat)
+
+
+def _advance_local_position(
+    lat: float, lng: float, city_lat: float, city_lng: float, prev_heading: float | None, step_km: float
+) -> tuple[float, float]:
+    """Moves (lat, lng) by step_km in a heading close to prev_heading (a
+    gentle turn, not an independent random jump), with a soft leash back
+    toward the base city if it's drifted too far."""
+    heading = (prev_heading if prev_heading is not None else random.uniform(0, 2 * math.pi))
+    heading += random.uniform(-0.5, 0.5)  # ~±28° turn per day
+
+    dist_from_center_km = math.hypot(
+        (lat - city_lat) * KM_PER_DEG_LAT,
+        (lng - city_lng) * KM_PER_DEG_LAT * math.cos(math.radians(city_lat)),
+    )
+    max_drift_km = CITY_RADIUS_DEGREES * KM_PER_DEG_LAT * MAX_DRIFT_MULTIPLIER
+    if dist_from_center_km > max_drift_km:
+        heading = _heading_from_points(lat, lng, city_lat, city_lng) + random.uniform(-0.3, 0.3)
+
+    dlat = (step_km / KM_PER_DEG_LAT) * math.cos(heading)
+    lng_scale = KM_PER_DEG_LAT * math.cos(math.radians(lat))
+    dlng = (step_km / lng_scale) * math.sin(heading) if lng_scale else 0.0
+    return lat + dlat, lng + dlng
+
+
+def _roll_distance_km(status: str) -> float:
+    if status == "available":
+        return random.uniform(*AVAILABLE_DISTANCE_RANGE) if random.random() < AVAILABLE_TRIP_PROBABILITY else 0.0
+    if status == "maintenance":
+        return random.uniform(*MAINTENANCE_DISTANCE_RANGE) if random.random() < MAINTENANCE_TRIP_PROBABILITY else 0.0
+    return random.uniform(*RENTED_DISTANCE_RANGE)  # rented
+
+
+def _roll_speed_kmh(status: str, distance_km: float) -> float:
+    if distance_km <= 0:
+        return 0.0
+    if status == "maintenance":
+        return random.uniform(*MAINTENANCE_SPEED_RANGE)
+    if status == "rented" and random.random() < OVERSPEED_ROLL_PROBABILITY:
+        return random.uniform(121, 150)
+    return random.uniform(20, 95)
+
+
+def _roll_fuel(base_fuel: float, distance_km: float) -> float:
+    if distance_km > 0:
+        consumption = distance_km * random.uniform(*FUEL_CONSUMPTION_PER_KM_RANGE)
+        fuel = base_fuel - consumption
+    else:
+        fuel = base_fuel - random.uniform(*IDLE_DRAIN_RANGE)
+
+    # Refuel/recharge events get more likely the lower the tank/battery is —
+    # occasional routine top-ups too, so a full tank isn't the only way out.
+    if fuel < 25 and random.random() < 0.45:
+        fuel = random.uniform(70, 100)
+    elif fuel < 45 and random.random() < 0.15:
+        fuel = random.uniform(60, 95)
+    elif random.random() < 0.04:
+        fuel = random.uniform(80, 100)
+
+    return _clamp(fuel, 5, 100)
 
 
 def get_or_create_sim_state(db: Session) -> SimulationState:
@@ -74,12 +168,14 @@ def run_simulation_cycle(db: Session) -> dict:
 
     vehicles = db.query(Vehicle).all()
     for vehicle in vehicles:
-        last_reading = (
+        last_two = (
             db.query(TelemetryReading)
             .filter_by(vehicle_id=vehicle.id)
             .order_by(TelemetryReading.timestamp.desc())
-            .first()
+            .limit(2)
+            .all()
         )
+        last_reading = last_two[0] if last_two else None
         city_lat, city_lng = CITIES.get(vehicle.base_city, (0.0, 0.0))
 
         if last_reading:
@@ -95,6 +191,11 @@ def run_simulation_cycle(db: Session) -> dict:
             prev_gps_active = True
             base_lat, base_lng = city_lat, city_lng
 
+        prev_heading = None
+        if len(last_two) == 2:
+            newer, older = last_two
+            prev_heading = _heading_from_points(older.lat, older.lng, newer.lat, newer.lng)
+
         goes_offline = random.random() < GPS_OFFLINE_PROBABILITY
 
         if goes_offline:
@@ -107,10 +208,13 @@ def run_simulation_cycle(db: Session) -> dict:
             mileage = base_mileage
             gps_active = False
         else:
-            lat, lng = _jitter(city_lat, city_lng)
-            mileage = base_mileage + random.uniform(20, 400)
-            fuel = _clamp(base_fuel + (random.uniform(15, 40) if random.random() < 0.25 else -random.uniform(2, 10)), 5, 100)
-            speed = random.uniform(121, 150) if random.random() < OVERSPEED_ROLL_PROBABILITY else random.uniform(0, 105)
+            distance_km = _roll_distance_km(vehicle.status)
+            speed = _roll_speed_kmh(vehicle.status, distance_km)
+            fuel = _roll_fuel(base_fuel, distance_km)
+            mileage = base_mileage + distance_km
+
+            step_km = random.uniform(*LOCAL_STEP_DRIVING_RANGE_KM) if distance_km > 0 else random.uniform(*LOCAL_STEP_IDLE_RANGE_KM)
+            lat, lng = _advance_local_position(base_lat, base_lng, city_lat, city_lng, prev_heading, step_km)
             gps_active = True
 
         reading = TelemetryReading(

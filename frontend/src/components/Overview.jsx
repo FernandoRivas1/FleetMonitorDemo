@@ -165,6 +165,7 @@ function VehicleCard({ vehicle: v, theme, alertCount, gpsNotified, onSelect }) {
   const fuelPct = v.current ? v.current.fuel_battery_level : null;
   const fuelBarColor = fuelPct != null && fuelPct < 20 ? theme.dangerStrong : theme.accent;
   const hasNoGps = v.current ? !v.current.gps_active : false;
+  const energyLabel = v.is_ev ? 'Battery' : 'Fuel';
 
   return (
     <div
@@ -185,7 +186,7 @@ function VehicleCard({ vehicle: v, theme, alertCount, gpsNotified, onSelect }) {
       {fuelPct != null && (
         <div style={{ marginBottom: '10px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: 'var(--muted)', marginBottom: '4px' }}>
-            <span>Energy</span>
+            <span>{energyLabel}</span>
             <span>{fuelPct.toFixed(0)}%</span>
           </div>
           <div style={{ height: '6px', borderRadius: '3px', background: 'var(--fill-soft)', overflow: 'hidden' }}>

@@ -16,6 +16,14 @@ body {
   border-radius: 10px;
 }
 
+/* CARTO's dark basemap tiles are legible zoomed out, but street/city detail
+   gets too dark once you zoom into a city. Scoped to the tile <img> elements
+   only (via Leaflet's tileLayer `className`), so markers/popups/legend are
+   unaffected. */
+.dark-tiles {
+  filter: brightness(1.45) contrast(0.85) saturate(1.2);
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

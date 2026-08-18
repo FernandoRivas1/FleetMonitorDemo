@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { fmt } from '../data.js';
 
-const METRICS = [
+const CHART_VIEWBOX_WIDTH = 600;
+
+const BASE_METRICS = [
   { key: 'mileage', label: 'Mileage', unit: ' km' },
   { key: 'speed_kmh', label: 'Speed', unit: ' km/h' },
-  { key: 'fuel_battery_level', label: 'Energy', unit: '%' },
 ];
 
 const NOTIFICATION_LABELS = {
@@ -21,6 +22,13 @@ export default function VehicleDetail({ vehicle, theme, alerts, notifications, o
   const [hoveredIdx, setHoveredIdx] = useState(null);
   const [readings, setReadings] = useState(null);
   const [telemetryError, setTelemetryError] = useState(null);
+  const [chartWidth, setChartWidth] = useState(CHART_VIEWBOX_WIDTH);
+  const chartWrapRef = useRef(null);
+  const energyLabel = vehicle.is_ev ? 'Battery' : 'Fuel';
+  const METRICS = useMemo(
+    () => [...BASE_METRICS, { key: 'fuel_battery_level', label: energyLabel, unit: '%' }],
+    [energyLabel]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -38,6 +46,22 @@ export default function VehicleDetail({ vehicle, theme, alerts, notifications, o
       cancelled = true;
     };
   }, [vehicle.id]);
+
+  // The SVG's viewBox is a fixed 600-unit-wide virtual space, but its
+  // rendered width is responsive (100%) — on a narrow phone that can be well
+  // under 600px. The tooltip box needs to be sized/positioned in real pixels
+  // (not a percentage of 600) or it clips off-screen; track the actual
+  // rendered width to convert between the two.
+  useEffect(() => {
+    const el = chartWrapRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect?.width;
+      if (width) setChartWidth(width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const statusColors = {
     available: { color: theme.success, bg: theme.successSoft, label: 'Available' },
@@ -66,10 +90,16 @@ export default function VehicleDetail({ vehicle, theme, alerts, notifications, o
   if (chart && hoveredIdx != null && chart.points[hoveredIdx]) {
     const p = chart.points[hoveredIdx];
     const label = metricDef.label + ': ' + fmt(chart.data[hoveredIdx]) + metricDef.unit;
-    const boxW = Math.max(46, label.length * 6.5 + 16);
-    const boxX = Math.min(Math.max(p.x - boxW / 2, 2), 598 - boxW);
+    // Font-size is fixed regardless of screen width, so the box must be
+    // sized/clamped in real rendered pixels — not as a percentage of the
+    // SVG's 600-unit virtual space, which shrinks on narrow/mobile screens
+    // and would clip the label.
+    const scale = chartWidth / CHART_VIEWBOX_WIDTH;
+    const realX = p.x * scale;
+    const boxW = Math.min(chartWidth - 4, Math.max(46, label.length * 6.5 + 16));
+    const boxX = Math.min(Math.max(realX - boxW / 2, 2), chartWidth - boxW - 2);
     const boxY = Math.max(2, p.y - 30);
-    tooltip = { x: p.x, boxY, leftPct: (boxX / 600) * 100, widthPct: (boxW / 600) * 100, label };
+    tooltip = { x: p.x, boxY, leftPx: boxX, widthPx: boxW, label };
   }
 
   const detailGridColumns = isMobile ? '1fr' : '1fr 1fr';
@@ -132,7 +162,7 @@ export default function VehicleDetail({ vehicle, theme, alerts, notifications, o
           {vehicle.current && (
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: '11.5px', color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-                Energy
+                {energyLabel}
               </div>
               <div style={{ fontSize: '18px', fontWeight: 800 }}>{vehicle.current.fuel_battery_level.toFixed(0)}%</div>
             </div>
@@ -169,7 +199,7 @@ export default function VehicleDetail({ vehicle, theme, alerts, notifications, o
         {!telemetryError && !chart && <div style={{ fontSize: '13px', color: 'var(--muted)' }}>Loading telemetry…</div>}
         {chart && (
           <>
-            <div style={{ position: 'relative' }}>
+            <div ref={chartWrapRef} style={{ position: 'relative' }}>
               <svg viewBox="0 0 600 200" style={{ width: '100%', height: '200px', display: 'block' }}>
                 <line x1="30" y1="10" x2="30" y2="170" stroke={theme.border} strokeWidth="1" />
                 <line x1="30" y1="170" x2="580" y2="170" stroke={theme.border} strokeWidth="1" />
@@ -195,10 +225,10 @@ export default function VehicleDetail({ vehicle, theme, alerts, notifications, o
               {tooltip && (
                 <div
                   style={{
-                    position: 'absolute', left: `${tooltip.leftPct}%`, top: `${tooltip.boxY}px`, width: `${tooltip.widthPct}%`,
-                    minWidth: '46px', background: '#1b2430', color: '#fff', fontSize: '12px', fontWeight: 700,
+                    position: 'absolute', left: `${tooltip.leftPx}px`, top: `${tooltip.boxY}px`, width: `${tooltip.widthPx}px`,
+                    background: '#1b2430', color: '#fff', fontSize: '12px', fontWeight: 700,
                     fontFamily: 'Manrope,sans-serif', padding: '4px 8px', borderRadius: '5px', textAlign: 'center',
-                    pointerEvents: 'none', whiteSpace: 'nowrap', boxSizing: 'border-box',
+                    pointerEvents: 'none', whiteSpace: 'nowrap', boxSizing: 'border-box', overflow: 'hidden',
                   }}
                 >
                   {tooltip.label}

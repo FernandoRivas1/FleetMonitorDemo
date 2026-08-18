@@ -42,7 +42,7 @@ function buildPopupHtml(v, sc, dotColor, theme, gpsActive, notified) {
     `<div style="font-weight:800;font-size:14px;margin-bottom:2px">${v.plate}</div>` +
     `<div style="font-size:12px;color:${theme.muted};margin-bottom:8px">${v.model}</div>` +
     `<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>Status</span><strong style="color:${dotColor}">${sc.label}</strong></div>` +
-    `<div style="display:flex;justify-content:space-between;font-size:12px"><span>Energy</span><strong>${v.current.fuel_battery_level.toFixed(0)}%</strong></div>` +
+    `<div style="display:flex;justify-content:space-between;font-size:12px"><span>${v.is_ev ? 'Battery' : 'Fuel'}</span><strong>${v.current.fuel_battery_level.toFixed(0)}%</strong></div>` +
     gpsHtml +
     `<button class="detail-btn" data-vid="${v.id}" style="width:100%;margin-top:8px;background:${theme.fill};color:${theme.text};border:none;border-radius:6px;padding:7px;font-family:Manrope,sans-serif;font-weight:700;font-size:12px;cursor:pointer">View detail</button>` +
     '</div>'
@@ -171,7 +171,7 @@ export default function MapView({ fleet, theme, themeMode, notifications, onView
     const map = L.map(containerRef.current, { zoomControl: false, zoomSnap: 0.5, preferCanvas: true });
     L.control.zoom({ position: 'bottomright' }).addTo(map);
     const tiles = latest.current.themeMode === 'dark' ? DARK_TILES : LIGHT_TILES;
-    tileLayerRef.current = L.tileLayer(tiles.url, { attribution: tiles.attribution, maxZoom: 18 }).addTo(map);
+    tileLayerRef.current = L.tileLayer(tiles.url, { attribution: tiles.attribution, maxZoom: 18, className: tiles.className || '' }).addTo(map);
     map.on('tileerror', () => {});
     markersLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
@@ -227,7 +227,7 @@ export default function MapView({ fleet, theme, themeMode, notifications, onView
     updateMarkers();
     if (tileLayerRef.current) map.removeLayer(tileLayerRef.current);
     const tiles = themeMode === 'dark' ? DARK_TILES : LIGHT_TILES;
-    tileLayerRef.current = L.tileLayer(tiles.url, { attribution: tiles.attribution, maxZoom: 18 }).addTo(map);
+    tileLayerRef.current = L.tileLayer(tiles.url, { attribution: tiles.attribution, maxZoom: 18, className: tiles.className || '' }).addTo(map);
     tileLayerRef.current.bringToBack();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeMode]);

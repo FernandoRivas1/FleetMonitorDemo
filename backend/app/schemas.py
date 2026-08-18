@@ -34,6 +34,7 @@ class VehicleOut(BaseModel):
     model: str
     base_city: str
     status: str
+    is_ev: bool
     driver: DriverOut | None
     current: TelemetryOut | None
 

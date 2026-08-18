@@ -17,6 +17,7 @@ class Vehicle(Base):
     model: Mapped[str] = mapped_column(String(64))
     base_city: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(16))  # available | rented | maintenance
+    is_ev: Mapped[bool] = mapped_column(Boolean, default=False)  # electric (battery %) vs combustion (fuel %)
 
     driver: Mapped["Driver"] = relationship(back_populates="vehicle", uselist=False, cascade="all, delete-orphan")
     telemetry: Mapped[list["TelemetryReading"]] = relationship(back_populates="vehicle", cascade="all, delete-orphan")

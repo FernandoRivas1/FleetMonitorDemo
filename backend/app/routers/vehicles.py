@@ -20,6 +20,7 @@ def list_vehicles(db: Session = Depends(get_db)):
             model=v.model,
             base_city=v.base_city,
             status=v.status,
+            is_ev=v.is_ev,
             driver=schemas.DriverOut.model_validate(v.driver) if v.driver else None,
             current=schemas.TelemetryOut.model_validate(readings[v.id]) if v.id in readings else None,
         )

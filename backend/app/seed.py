@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.constants import (
     CITIES,
-    CITY_RADIUS_DEGREES,
+    EV_PROBABILITY,
+    EV_VEHICLE_MODELS,
     FIRST_NAMES,
     LAST_NAMES,
     MAINTENANCE_ALERT_TYPES,
@@ -23,17 +24,15 @@ from app.constants import (
 )
 from app.database import Base, SessionLocal, engine
 from app.models import Driver, MaintenanceAlert, SimulationState, TelemetryReading, Vehicle
-
-
-def _clamp(value: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, value))
-
-
-def _jitter(lat: float, lng: float) -> tuple[float, float]:
-    return (
-        lat + random.uniform(-CITY_RADIUS_DEGREES, CITY_RADIUS_DEGREES),
-        lng + random.uniform(-CITY_RADIUS_DEGREES, CITY_RADIUS_DEGREES),
-    )
+from app.services.simulation import (
+    LOCAL_STEP_DRIVING_RANGE_KM,
+    LOCAL_STEP_IDLE_RANGE_KM,
+    _advance_local_position,
+    _heading_from_points,
+    _roll_distance_km,
+    _roll_fuel,
+    _roll_speed_kmh,
+)
 
 
 def _make_plate(used: set[str]) -> str:
@@ -65,12 +64,15 @@ def seed_database(db: Session, fleet_min: int, fleet_max: int) -> None:
         city = random.choice(city_names)
         lat0, lng0 = CITIES[city]
         status = random.choices(STATUSES, weights=[0.45, 0.40, 0.15])[0]
+        is_ev = random.random() < EV_PROBABILITY
+        model = random.choice(EV_VEHICLE_MODELS if is_ev else VEHICLE_MODELS)
 
         vehicle = Vehicle(
             plate=_make_plate(used_plates),
-            model=random.choice(VEHICLE_MODELS),
+            model=model,
             base_city=city,
             status=status,
+            is_ev=is_ev,
         )
         db.add(vehicle)
         db.flush()  # assigns vehicle.id
@@ -82,15 +84,25 @@ def seed_database(db: Session, fleet_min: int, fleet_max: int) -> None:
         )
         db.add(driver)
 
-        # 14 days of historical telemetry, ending "today" (the sim clock's start).
+        # 14 days of historical telemetry, ending "today" (the sim clock's
+        # start) — uses the same status-aware distance/speed/fuel model as
+        # ongoing simulate() cycles, so the initial chart already looks
+        # plausible instead of an independent random walk.
         fuel = random.uniform(40, 100)
         mileage = random.uniform(5000, 90000)
+        lat, lng = lat0, lng0
+        heading = None
         for days_ago in range(13, -1, -1):
             ts = now - dt.timedelta(days=days_ago)
-            lat, lng = _jitter(lat0, lng0)
-            mileage += random.uniform(20, 380)
-            fuel = _clamp(fuel + (random.uniform(15, 40) if random.random() < 0.25 else -random.uniform(2, 9)), 5, 100)
-            speed = 0.0 if (status == "maintenance" and random.random() < 0.5) else random.uniform(0, 105)
+            distance_km = _roll_distance_km(status)
+            speed = _roll_speed_kmh(status, distance_km)
+            fuel = _roll_fuel(fuel, distance_km)
+            mileage += distance_km
+            step_km = random.uniform(*LOCAL_STEP_DRIVING_RANGE_KM) if distance_km > 0 else random.uniform(*LOCAL_STEP_IDLE_RANGE_KM)
+            new_lat, new_lng = _advance_local_position(lat, lng, lat0, lng0, heading, step_km)
+            if (new_lat, new_lng) != (lat, lng):
+                heading = _heading_from_points(lat, lng, new_lat, new_lng)
+            lat, lng = new_lat, new_lng
             db.add(
                 TelemetryReading(
                     vehicle_id=vehicle.id,
@@ -123,12 +135,20 @@ def seed_database(db: Session, fleet_min: int, fleet_max: int) -> None:
 
 
 if __name__ == "__main__":
+    import sys
+
     from app.config import settings
+
+    if "--reset" in sys.argv:
+        # Drops and recreates every table — for a schema change (e.g. a new
+        # column) against data that's entirely synthetic and disposable.
+        print("Dropping and recreating all tables...")
+        Base.metadata.drop_all(bind=engine)
 
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         if db.query(Vehicle).first() is not None:
-            print("Database already has vehicles — skipping seed. Delete the DB file to reseed.")
+            print("Database already has vehicles — skipping seed. Run with --reset to start over.")
         else:
             seed_database(db, settings.FLEET_MIN, settings.FLEET_MAX)
             count = db.query(Vehicle).count()

@@ -36,6 +36,17 @@ VEHICLE_MODELS = [
     "Mazda BT-50",
 ]
 
+# A minority of the fleet is electric — these draw from a separate model
+# pool so an EV's "battery" reading has a plausible model attached, and the
+# frontend can show "Fuel" vs "Battery" accordingly.
+EV_VEHICLE_MODELS = [
+    "BYD Dolphin",
+    "MG4 Electric",
+    "Nissan Leaf",
+    "BYD Yuan Plus",
+]
+EV_PROBABILITY = 0.15
+
 STATUSES = ["available", "rented", "maintenance"]
 
 # Fictitious given/family names for generating driver names — no relation to

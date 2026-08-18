@@ -16,8 +16,11 @@ export const DARK_THEME = {
   warning: '#e0a940', warningSoft: '#3a2f18', disabledBg: '#2f3742', shadow: 'rgba(0,0,0,0.5)',
 };
 
-export const LIGHT_TILES = { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors' };
-export const DARK_TILES = { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '&copy; OpenStreetMap contributors &copy; CARTO' };
+export const LIGHT_TILES = { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '&copy; OpenStreetMap contributors', className: '' };
+// CARTO's dark_all tiles are legible at low zoom but street/city detail gets
+// too dark once you zoom into a city — className hooks the .dark-tiles CSS
+// filter (see index.css) that brightens just the tile images.
+export const DARK_TILES = { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '&copy; OpenStreetMap contributors &copy; CARTO', className: 'dark-tiles' };
 
 // Exposes all theme tokens as CSS custom properties on the app root.
 export function themeVars(theme) {
