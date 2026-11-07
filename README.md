@@ -1,5 +1,10 @@
 # FleetMonitor Demo
 
+[![CI](https://github.com/FernandoRivas1/FleetMonitorDemo/actions/workflows/ci.yml/badge.svg)](https://github.com/FernandoRivas1/FleetMonitorDemo/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-FastAPI-009688)
+![React](https://img.shields.io/badge/React-Vite-61dafb)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 A fleet-monitoring dashboard for a fictitious vehicle-rental company with a
 simulated presence across 8 Chilean cities: a live map, a filterable vehicle
 overview, per-vehicle telemetry/alerts/notifications, and a chat assistant
@@ -7,6 +12,14 @@ that answers questions about the fleet in plain English.
 
 This is a **portfolio/demo project**. Read the disclaimers below before
 treating anything in it as real.
+
+**[Live demo →](https://fleetmonitor-demo-frontend.vercel.app)** (the
+backend runs on a free tier, so the first visit can take about a minute
+while it wakes up; the page tells you when that's happening).
+
+![Fleet map](docs/screenshots/fleet-map.png)
+
+<img src="docs/screenshots/vehicle-detail.png" alt="Vehicle detail: telemetry chart, maintenance alerts and driver notifications">
 
 ## ⚠️ Important disclaimers
 
@@ -220,3 +233,31 @@ Each `POST /simulate` call:
      real reading that cycle, transitioning it to "not transmitting"
 4. Writes each triggered notification as a `DriverNotification` record with
    `sent = true` — this *is* the "sending," no external API is called.
+
+## Tests
+
+```bash
+cd backend
+pip install -r requirements.txt -r requirements-dev.txt
+# needs a throwaway Postgres database: every test recreates the schema
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/fleet_test pytest
+
+cd ../frontend && npm test
+```
+
+The backend suite covers the simulation engine's rules (overspeed and GPS
+outages are edge-triggered, hard braking is detected, overdue maintenance
+is notified exactly once, fuel stays within 0–100 and vehicles stay
+leashed to their city), the HTTP API, and the rule-based assistant. One
+test fires concurrent `POST /simulate` calls. Every open dashboard tab
+auto-simulates, so on the live demo these overlap; the cycle locks the
+simulation clock row so they run one after another instead of all
+advancing the same day.
+
+CI (`.github/workflows/ci.yml`) runs the backend suite against a Postgres
+service container, plus the frontend tests and a production build, on
+every push and pull request.
+
+## License
+
+[MIT](LICENSE)
