@@ -129,7 +129,10 @@ def _roll_fuel(base_fuel: float, distance_km: float) -> float:
 
 
 def get_or_create_sim_state(db: Session) -> SimulationState:
-    state = db.query(SimulationState).filter_by(singleton=1).first()
+    # FOR UPDATE holds the clock row until the cycle commits, so overlapping
+    # POST /simulate calls (every open dashboard tab auto-simulates) run one
+    # after another instead of all advancing the same day and double-notifying.
+    state = db.query(SimulationState).filter_by(singleton=1).with_for_update().first()
     if state is None:
         state = SimulationState(singleton=1, current_time=dt.datetime.now(dt.timezone.utc).replace(tzinfo=None), cycle_count=0)
         db.add(state)
